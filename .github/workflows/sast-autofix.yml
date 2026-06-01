@@ -1,0 +1,73 @@
+name: SAST Autofix
+
+# Weekly auto-fix pass for a push-to-master repo. Day-to-day work lands on
+# master directly (no PRs), so this scheduled job runs the safe Go fixers and
+# opens a single rolling PR with any changes. Because the PR is created with a
+# PAT (not GITHUB_TOKEN), it triggers the go-sast and codeql `pull_request`
+# checks, giving a review checkpoint that direct pushes otherwise skip.
+on:
+  schedule:
+    # Monday 08:00 UTC — after go-sast (06:00) and codeql (07:00).
+    - cron: "0 8 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sast-autofix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  autofix:
+    name: autofix
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: step-security/harden-runner@002fdce3c6a235733a90a27c80493a3241e56863 # v2.12.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # PAT so the resulting PR triggers the SAST pull_request checks.
+          token: ${{ secrets.SAST_AUTOFIX_TOKEN }}
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Apply formatting and module hygiene fixes
+        run: |
+          gofmt -s -w .
+          go install golang.org/x/tools/cmd/goimports@latest
+          goimports -w .
+          go mod tidy
+      - name: Verify it still builds
+        run: go build ./...
+      - name: Create or update pull request
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ secrets.SAST_AUTOFIX_TOKEN }}
+          base: master
+          branch: chore/sast-autofix
+          delete-branch: true
+          commit-message: "chore: weekly SAST autofix (gofmt, goimports, go mod tidy)"
+          title: "chore: weekly SAST autofix"
+          labels: |
+            automated
+            sast
+          body: |
+            Automated weekly maintenance from the **SAST Autofix** workflow.
+
+            Applied the safe Go fixers:
+            - `gofmt -s -w .`
+            - `goimports -w -local github.com/open-rails/authkit .`
+            - `go mod tidy`
+
+            This PR is opened with a PAT so the `Go SAST` and `CodeQL` checks run
+            here. Review the diff and merge if green. If there are no changes in a
+            given week, no PR is created.
+
+            > Non-formatting findings (gosec/staticcheck/CodeQL) are **not**
+            > auto-fixed — they need human judgement. See `SECURITY.md`.

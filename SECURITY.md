@@ -48,6 +48,38 @@ write` granted only to the jobs that upload SARIF.
 
 ---
 
+Staying scanned on a push-to-master repo
+
+Day-to-day work lands on `master` directly rather than through pull requests, so
+the `pull_request` checks rarely fire for normal changes. Two things keep the
+codebase from drifting:
+
+- Every `push` to `master` still runs `go-sast` and `codeql`, and the results
+  show up in the Security tab — direct pushes are always scanned.
+- `sast-autofix.yml` runs weekly (Monday 08:00 UTC, after the scans) and applies
+  the safe Go fixers — `gofmt -s`, `goimports` (no `-local` regrouping), and
+  `go mod tidy` — then opens a
+  single rolling PR (`chore/sast-autofix`) if anything changed. Because that PR
+  is created with a PAT, it triggers the full `go-sast` and `codeql`
+  `pull_request` checks, giving a periodic review checkpoint that direct pushes
+  skip. Non-formatting findings (gosec/staticcheck/CodeQL) are deliberately
+  *not* auto-fixed — they need human judgement.
+
+Setup — the autofix workflow needs a token that can push a branch and open a PR,
+stored as the `SAST_AUTOFIX_TOKEN` repository secret. Use a token whose PR
+creation triggers other workflows (the default `GITHUB_TOKEN` does not):
+
+- Fine-grained PAT scoped to this repo with `Contents: read/write` and
+  `Pull requests: read/write` (recommended), or a classic PAT with the `repo`
+  scope. A GitHub App installation token works too.
+- Add it under Settings → Secrets and variables → Actions → New repository
+  secret, named `SAST_AUTOFIX_TOKEN`.
+
+If the secret is absent the workflow simply fails to push/open the PR; the
+scanning workflows are unaffected.
+
+---
+
 gosec configuration
 
 Rule tuning lives in `.gosec.json` (gosec's `-conf` flag only reads JSON, not
